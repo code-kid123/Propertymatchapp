@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   SlidersHorizontal,
@@ -24,7 +24,7 @@ const PROPERTY_TYPES: { label: string; value: PropertyType }[] = [
   { label: "Terrace", value: "terrace" },
 ];
 
-export default function PropertiesClient() {
+function FilteredProperties() {
   const searchParams = useSearchParams();
 
   const {
@@ -246,5 +246,19 @@ export default function PropertiesClient() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function PropertiesClient() {
+  return (
+    <Suspense
+      fallback={
+        <div className="mx-auto max-w-7xl px-4 py-16 text-center text-sm text-ink-700">
+          Loading properties...
+        </div>
+      }
+    >
+      <FilteredProperties />
+    </Suspense>
   );
 }
