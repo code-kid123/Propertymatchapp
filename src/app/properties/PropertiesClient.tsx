@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, Suspense } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   SlidersHorizontal,
@@ -24,9 +24,8 @@ const PROPERTY_TYPES: { label: string; value: PropertyType }[] = [
   { label: "Terrace", value: "terrace" },
 ];
 
-function FilteredProperties() {
+function FilterSection() {
   const searchParams = useSearchParams();
-
   const {
     filters,
     filtered,
@@ -43,7 +42,6 @@ function FilteredProperties() {
 
   useEffect(() => {
     if (!searchParams) return;
-
     const buyOrRent = searchParams.get("buyOrRent");
     const location = searchParams.get("location");
     const type = searchParams.get("type");
@@ -249,16 +247,24 @@ function FilteredProperties() {
   );
 }
 
-export default function PropertiesClient() {
+export default function ClientProperties() {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return (
+      <div className="mx-auto max-w-7xl px-4 py-16 text-center text-sm text-ink-700">
+        Loading properties...
+      </div>
+    );
+  }
+
   return (
-    <Suspense
-      fallback={
-        <div className="mx-auto max-w-7xl px-4 py-16 text-center text-sm text-ink-700">
-          Loading properties...
-        </div>
-      }
-    >
-      <FilteredProperties />
+    <Suspense fallback={<div className="mx-auto max-w-7xl px-4 py-16 text-center text-sm text-ink-700">Loading properties...</div>}>
+      <FilterSection />
     </Suspense>
   );
 }
