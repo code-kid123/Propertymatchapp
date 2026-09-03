@@ -1,31 +1,30 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useCallback, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
+import Image from "next/image";
 import Link from "next/link";
 import {
-  Users,
-  UserPlus,
-  CalendarCheck,
-  TrendingUp,
+  ArrowLeft,
   MessageCircle,
-  ChevronDown,
+  Mail,
+  Phone,
+  MapPin,
+  Home,
+  DollarSign,
+  Calendar,
+  Clock,
+  StickyNote,
+  Save,
+  Tag,
+  CheckCircle2,
   Eye,
-  BarChart3,
 } from "lucide-react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-} from "recharts";
 import { useApp } from "@/context/AppContext";
+import { supabase } from "@/lib/supabase";
 import { formatPrice, generateWhatsAppLink } from "@/utils/formatters";
+import { mockProperties } from "@/data/mockProperties";
 import type { Lead, LeadStatus } from "@/types";
-export const dynamic = 'force-dynamic';
 
 const STATUS_OPTIONS: { value: LeadStatus; label: string; color: string }[] = [
   { value: "new", label: "New", color: "bg-blue-100 text-blue-700" },
@@ -35,316 +34,489 @@ const STATUS_OPTIONS: { value: LeadStatus; label: string; color: string }[] = [
   { value: "not-interested", label: "Not Interested", color: "bg-canvas-muted text-ink-700" },
 ];
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const CHART_COLORS = ["#10b981", "#06b6d4", "#8b5cf6", "#f59e0b", "#ef4444", "#ec4899", "#6366f1"];
+function LeadsContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const { leads, viewingRequests, updateLead, setLeads } = useApp();
 
-export default function AdminDashboardPage() {
-  const { leads, viewingRequests, properties, updateLead } = useApp();
-  const [statusOpen, setStatusOpen] = useState<string | null>(null);
+  const activeId = searchParams.get("id");
+  const selectedLead = useMemo(
+    () => leads.find((l) => l.id === activeId) || null,
+    [leads, activeId]
+  );
 
-  const kpis = useMemo(() => {
-    const now = Date.now();
-    const h24 = 24 * 60 * 60 * 1000;
-    const newLeads24h = leads.filter(
-      (l) => now - new Date(l.createdAt).getTime() < h24
-    ).length;
-    const scheduled = viewingRequests.filter((v) => v.status === "pending" || v.status === "confirmed").length;
-    const converted = leads.filter((l) => l.status === "converted").length;
-    const rate = leads.length > 0 ? Math.round((converted / leads.length) * 100) : 0;
-    return { total: leads.length, newLeads24h, scheduled, rate };
-  }, [leads, viewingRequests]);
+  const [agentNotes, setAgentNotes] = useState("");
+  const [notesSaved, setNotesSaved] = useState(false);
 
-  const monthlyData = useMemo(() => {
-    const counts: Record<string, number> = {};
-    leads.forEach((l) => {
-      const d = new Date(l.createdAt);
-      const key = `${d.getFullYear()}-${d.getMonth()}`;
-      counts[key] = (counts[key] || 0) + 1;
-    });
-    const result: { month: string; leads: number }[] = [];
-    const now = new Date();
-    for (let i = 5; i >= 0; i--) {
-      const dt = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${dt.getFullYear()}-${dt.getMonth()}`;
-      result.push({ month: MONTHS[dt.getMonth()], leads: counts[key] || 0 });
+  useEffect(() => {
+    async function fetchLeads() {
+      const { data } = await supabase
+        .from("leads")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (data && data.length > 0) {
+        const mapped = data.map((row) => ({
+          id: row.id,
+          firstName: (row.full_name || "").split(" ")[0] || "",
+          lastName: (row.full_name || "").split(" ").slice(1).join(" ") || "",
+          email: row.email || "",
+          phone: row.phone || "",
+          whatsappNumber: row.whatsapp || "",
+          source: row.source || "other",
+          status: row.status || "new",
+          budget: row.budget_min != null ? {
+            min: row.budget_min,
+            max: row.budget_max ?? 0,
+            currency: row.budget_currency || "NGN",
+          } : undefined,
+          preferredLocations: row.desired_location ? row.desired_location.split(", ") : [],
+          preferredPropertyType: row.property_type || undefined,
+          notes: row.notes || `[Qualified via Quiz] Timeline: ${row.timeline || ""}. Intent: ${row.intent || ""}.`,
+          interestedProperties: row.interested_properties || [],
+          createdAt: row.created_at || new Date().toISOString(),
+          updatedAt: row.updated_at || new Date().toISOString(),
+        }));
+        setLeads(mapped);
+      }
     }
-    return result;
-  }, [leads]);
+    fetchLeads();
+  }, [setLeads]);
 
-  const locationData = useMemo(() => {
-    const counts: Record<string, number> = {};
-    leads.forEach((l) => {
-      l.preferredLocations.forEach((loc) => {
-        counts[loc] = (counts[loc] || 0) + 1;
-      });
-    });
-    return Object.entries(counts)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 7);
-  }, [leads]);
+  useEffect(() => {
+    if (selectedLead) {
+      const existing = selectedLead.notes.startsWith("[Agent Notes]")
+        ? selectedLead.notes.replace("[Agent Notes] ", "")
+        : "";
+      setAgentNotes(existing);
+      setNotesSaved(false);
+    }
+  }, [selectedLead]);
 
-  const handleStatusChange = (leadId: string, status: LeadStatus) => {
-    updateLead(leadId, { status });
-    setStatusOpen(null);
+  const saveNotes = useCallback(() => {
+    if (!selectedLead) return;
+    const prefix = agentNotes.trim()
+      ? `[Agent Notes] ${agentNotes.trim()}`
+      : selectedLead.notes.replace(/^\[Agent Notes\]\s*/, "");
+    updateLead(selectedLead.id, { notes: prefix });
+    setNotesSaved(true);
+    setTimeout(() => setNotesSaved(false), 2000);
+  }, [selectedLead, agentNotes, updateLead]);
+
+  const handleStatusChange = async (status: LeadStatus) => {
+    if (!selectedLead) return;
+    updateLead(selectedLead.id, { status });
+    await supabase.from("leads").update({ status }).eq("id", selectedLead.id);
   };
 
-  const sortedLeads = useMemo(
-    () => [...leads].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-    [leads]
+  const leadViewings = useMemo(
+    () =>
+      selectedLead
+        ? viewingRequests.filter(
+            (v) =>
+              v.leadId === selectedLead.id ||
+              selectedLead.interestedProperties.includes(v.propertyId)
+          )
+        : [],
+    [selectedLead, viewingRequests]
   );
+
+  const interestedPropertyData = useMemo(
+    () =>
+      selectedLead
+        ? mockProperties.filter((p) => selectedLead.interestedProperties.includes(p.id))
+        : [],
+    [selectedLead]
+  );
+
+  const parseQuizData = (notes: string) => {
+    const timeline = notes.match(/Timeline:\s*([^.]*)/)?.[1]?.trim() || "";
+    const intent = notes.match(/Intent:\s*([^.]*)/)?.[1]?.trim() || "";
+    const isQualified = notes.includes("[Qualified via Quiz]");
+    return { timeline, intent, isQualified };
+  };
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center gap-3">
+        <Link
+          href="/admin"
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-line text-ink-700 hover:bg-canvas-muted"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </Link>
         <div>
-          <h1 className="text-2xl font-semibold text-ink">Agent Dashboard</h1>
-          <p className="mt-1 text-sm text-ink-700">
-            Manage leads, viewings, and conversions at a glance.
+          <h1 className="text-2xl font-semibold text-ink">Lead Management</h1>
+          <p className="mt-0.5 text-sm text-ink-700">
+            Select a lead to view full profile, notes, and inspection history.
           </p>
         </div>
-        <Link
-          href="/admin/leads"
-          className="flex items-center gap-1.5 rounded-lg bg-ink px-4 py-2.5 text-xs font-semibold text-white hover:bg-ink-800"
-        >
-          <Eye className="h-3.5 w-3.5" />
-          Full Lead View
-        </Link>
       </div>
 
-      {/* KPI Cards */}
-      <div className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {[
-          { label: "Total Leads", value: kpis.total, icon: Users, color: "text-blue-600", bg: "bg-blue-50" },
-          { label: "New (24h)", value: kpis.newLeads24h, icon: UserPlus, color: "text-[var(--brand-primary)]", bg: "bg-gold-50" },
-          { label: "Scheduled Viewings", value: kpis.scheduled, icon: CalendarCheck, color: "text-[var(--brand-primary)]", bg: "bg-canvas-muted" },
-          { label: "Conversion Rate", value: `${kpis.rate}%`, icon: TrendingUp, color: "text-amber-600", bg: "bg-amber-50" },
-        ].map((kpi) => (
-          <div
-            key={kpi.label}
-            className="rounded-lg border border-line bg-canvas-card p-5 "
-          >
-            <div className="flex items-center gap-3">
-              <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${kpi.bg}`}>
-                <kpi.icon className={`h-5 w-5 ${kpi.color}`} />
+      <div className="mt-6 grid gap-6 lg:grid-cols-[340px_1fr]">
+        {/* --- LEAD LIST PANEL --- */}
+        <div className="rounded-lg border border-line bg-canvas-card">
+          <div className="border-b border-line px-4 py-3">
+            <h2 className="text-xs font-semibold text-ink">
+              All Leads ({leads.length})
+            </h2>
+          </div>
+          <div className="max-h-[calc(100vh-280px)] overflow-y-auto">
+            {leads.length === 0 ? (
+              <div className="px-4 py-12 text-center text-xs text-ink-700">
+                No leads yet.
               </div>
-              <div>
-                <p className="text-xs text-ink-700">{kpi.label}</p>
-                <p className="text-xl font-semibold text-ink">{kpi.value}</p>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Charts Row */}
-      <div className="mt-8 grid gap-6 lg:grid-cols-2">
-        {/* Monthly Leads */}
-        <div className="rounded-lg border border-line bg-canvas-card p-5 ">
-          <div className="mb-4 flex items-center gap-2">
-            <BarChart3 className="h-4 w-4 text-ink-700" />
-            <h2 className="text-sm font-semibold text-ink">Monthly Lead Intake</h2>
-          </div>
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={monthlyData} barSize={32}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
-                />
-                <Bar dataKey="leads" name="Leads" radius={[4, 4, 0, 0]}>
-                  {monthlyData.map((_, i) => (
-                    <Cell key={i} fill={i === monthlyData.length - 1 ? "#10b981" : "#d1d5db"} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Top Locations */}
-        <div className="rounded-lg border border-line bg-canvas-card p-5 ">
-          <div className="mb-4 flex items-center gap-2">
-            <BarChart3 className="h-4 w-4 text-ink-700" />
-            <h2 className="text-sm font-semibold text-ink">Top Requested Locations</h2>
-          </div>
-          <div className="h-56">
-            {locationData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={locationData} layout="vertical" barSize={18}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                  <XAxis type="number" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} allowDecimals={false} />
-                  <YAxis
-                    type="category"
-                    dataKey="name"
-                    tick={{ fontSize: 10, fill: "#64748b" }}
-                    axisLine={false}
-                    tickLine={false}
-                    width={110}
-                  />
-                  <Tooltip
-                    contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
-                  />
-                  <Bar dataKey="value" name="Leads" radius={[0, 4, 4, 0]}>
-                    {locationData.map((_, i) => (
-                      <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
             ) : (
-              <div className="flex h-full items-center justify-center text-xs text-ink-700">
-                No location data yet. Leads will populate as they come in.
-              </div>
+              leads.map((lead) => {
+                const isActive = lead.id === activeId;
+                const statusOpt =
+                  STATUS_OPTIONS.find((s) => s.value === lead.status) ||
+                  STATUS_OPTIONS[0];
+                return (
+                  <button
+                    key={lead.id}
+                    onClick={() => router.push(`/admin/leads?id=${lead.id}`)}
+                    className={`flex w-full items-center gap-3 border-b border-line px-4 py-3 text-left transition-colors ${
+                      isActive
+                        ? "bg-gold-50"
+                        : "hover:bg-canvas-muted"
+                    }`}
+                  >
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-canvas-muted text-xs font-semibold text-ink-700">
+                      {lead.firstName?.[0] || "?"}
+                      {lead.lastName?.[0] || ""}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-ink">
+                        {lead.firstName} {lead.lastName}
+                      </p>
+                      <p className="truncate text-[10px] text-ink-700">
+                        {lead.email}
+                      </p>
+                    </div>
+                    <span
+                      className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold ${statusOpt.color}`}
+                    >
+                      {statusOpt.label}
+                    </span>
+                  </button>
+                );
+              })
             )}
           </div>
         </div>
-      </div>
 
-      {/* Lead Table */}
-      <div className="mt-8 rounded-lg border border-line bg-canvas-card ">
-        <div className="flex items-center justify-between border-b border-line px-5 py-4">
-          <h2 className="text-sm font-semibold text-ink">
-            Recent Leads ({sortedLeads.length})
-          </h2>
-        </div>
-
-        {sortedLeads.length === 0 ? (
-          <div className="px-5 py-16 text-center">
-            <p className="text-sm text-ink-700">
-              No leads yet. They&apos;ll appear here as visitors use the Match Quiz or inquire on WhatsApp.
-            </p>
+        {/* --- LEAD DETAIL PANEL --- */}
+        {!selectedLead ? (
+          <div className="flex min-h-[400px] items-center justify-center rounded-lg border border-dashed border-line bg-canvas-card text-sm text-ink-700">
+            Select a lead from the list to view details.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-line bg-canvas-muted text-[10px] font-semibold uppercase tracking-wider text-ink-700">
-                  <th className="px-5 py-3">Lead Name</th>
-                  <th className="px-5 py-3">Contact</th>
-                  <th className="px-5 py-3">Budget</th>
-                  <th className="px-5 py-3">Location</th>
-                  <th className="px-5 py-3">Intent</th>
-                  <th className="px-5 py-3">Source</th>
-                  <th className="px-5 py-3">Status</th>
-                  <th className="px-5 py-3">Date</th>
-                  <th className="px-5 py-3"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {sortedLeads.map((lead) => {
-                  const statusOpt = STATUS_OPTIONS.find((s) => s.value === lead.status) || STATUS_OPTIONS[0];
-                  const waLink = generateWhatsAppLink(
-                    lead.whatsappNumber || lead.phone,
-                    `Hi ${lead.firstName}, this is Bluehedge Realtors following up on your property inquiry.`
-                  );
-                  return (
-                    <tr key={lead.id} className="hover:bg-canvas-muted/50">
-                      <td className="px-5 py-3">
-                        <Link
-                          href={`/admin/leads?id=${lead.id}`}
-                          className="font-semibold text-ink hover:text-ink"
-                        >
-                          {lead.firstName} {lead.lastName}
-                        </Link>
-                      </td>
-                      <td className="px-5 py-3">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-ink-700">{lead.email}</span>
-                          <a
-                            href={waLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-[var(--brand-primary)] hover:underline"
-                          >
-                            <MessageCircle className="h-3 w-3" />
-                            WhatsApp
-                          </a>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3 text-ink-700">
-                        {lead.budget
-                          ? `${formatPrice(lead.budget.min, lead.budget.currency)} — ${formatPrice(lead.budget.max, lead.budget.currency)}`
-                          : "—"}
-                      </td>
-                      <td className="px-5 py-3 text-ink-700">
-                        {lead.preferredLocations.join(", ") || "—"}
-                      </td>
-                      <td className="px-5 py-3">
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                            lead.notes.includes("Intent: Buy")
-                              ? "bg-blue-50 text-blue-700"
-                              : "bg-canvas-muted text-ink"
+          <div className="space-y-6">
+            {/* Top Card */}
+            <div className="rounded-lg border border-line bg-canvas-card p-6">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-forest/10 text-lg font-semibold text-ink">
+                    {selectedLead.firstName?.[0] || "?"}
+                    {selectedLead.lastName?.[0] || ""}
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold text-ink">
+                      {selectedLead.firstName} {selectedLead.lastName}
+                    </h2>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {STATUS_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.value}
+                          onClick={() => handleStatusChange(opt.value)}
+                          className={`rounded-full px-3 py-1 text-[10px] font-semibold transition-all ${
+                            selectedLead.status === opt.value
+                              ? `${opt.color} ring-2 ring-offset-1`
+                              : "bg-canvas-muted text-ink-700 hover:bg-canvas-muted"
                           }`}
                         >
-                          {lead.notes.includes("Intent: Buy") ? "Buy" : lead.notes.includes("Intent: Rent") ? "Rent" : "—"}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3">
-                        <span className="rounded-full bg-canvas-muted px-2 py-0.5 text-[10px] font-medium text-ink-700 capitalize">
-                          {lead.source === "quiz" ? "Match Quiz" : lead.source === "property-detail" ? "Property Detail" : lead.source}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3">
-                        <div className="relative">
-                          <button
-                            onClick={() => setStatusOpen(statusOpen === lead.id ? null : lead.id)}
-                            className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold ${statusOpt.color}`}
-                          >
-                            {statusOpt.label}
-                            <ChevronDown className="h-3 w-3" />
-                          </button>
-                          {statusOpen === lead.id && (
-                            <div className="absolute left-0 top-full z-20 mt-1 w-44 rounded-lg border border-line bg-canvas-card py-1 shadow-lg">
-                              {STATUS_OPTIONS.map((opt) => (
-                                <button
-                                  key={opt.value}
-                                  onClick={() => handleStatusChange(lead.id, opt.value)}
-                                  className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-canvas-muted ${
-                                    lead.status === opt.value ? "font-semibold" : "text-ink-700"
-                                  }`}
-                                >
-                                  <span className={`h-2 w-2 rounded-full ${
-                                    opt.value === "new" ? "bg-blue-500"
-                                    : opt.value === "contacted" ? "bg-amber-500"
-                                    : opt.value === "viewing-scheduled" ? "bg-[var(--brand-primary)]"
-                                    : opt.value === "converted" ? "bg-gold-500"
-                                    : "bg-canvas-muted"
-                                  }`} />
-                                  {opt.label}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-5 py-3 text-ink-700">
-                        {new Date(lead.createdAt).toLocaleDateString("en-GB", {
-                          day: "numeric",
-                          month: "short",
-                          year: "numeric",
-                        })}
-                      </td>
-                      <td className="px-5 py-3">
-                        <Link
-                          href={`/admin/leads?id=${lead.id}`}
-                          className="text-ink-700 hover:text-[var(--brand-primary)]"
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Link>
-                      </td>
-                    </tr>
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <a
+                    href={generateWhatsAppLink(
+                      selectedLead.whatsappNumber || selectedLead.phone,
+                      `Hi ${selectedLead.firstName}, this is Bluehedge Realtors following up on your property inquiry.`
+                    )}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 rounded-lg bg-whatsapp px-3 py-2 text-xs font-semibold text-white hover:bg-whatsapp-700"
+                  >
+                    <MessageCircle className="h-3.5 w-3.5" />
+                    WhatsApp
+                  </a>
+                  <a
+                    href={`tel:${selectedLead.phone}`}
+                    className="flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink-700 hover:bg-canvas-muted"
+                  >
+                    <Phone className="h-3.5 w-3.5" />
+                    Call
+                  </a>
+                  <a
+                    href={`mailto:${selectedLead.email}`}
+                    className="flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink-700 hover:bg-canvas-muted"
+                  >
+                    <Mail className="h-3.5 w-3.5" />
+                    Email
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            {/* Details Grid */}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {/* Contact */}
+              <div className="rounded-lg border border-line bg-canvas-card p-4">
+                <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-ink">
+                  <Phone className="h-3.5 w-3.5 text-ink-700" />
+                  Contact Details
+                </h3>
+                <div className="space-y-2 text-xs text-ink-700">
+                  <p><span className="text-ink-700">Phone:</span> {selectedLead.phone}</p>
+                  <p><span className="text-ink-700">WhatsApp:</span> {selectedLead.whatsappNumber || selectedLead.phone}</p>
+                  <p><span className="text-ink-700">Email:</span> {selectedLead.email}</p>
+                </div>
+              </div>
+
+              {/* Budget */}
+              <div className="rounded-lg border border-line bg-canvas-card p-4">
+                <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-ink">
+                  <DollarSign className="h-3.5 w-3.5 text-ink-700" />
+                  Target Budget
+                </h3>
+                {selectedLead.budget ? (
+                  <div className="space-y-1 text-xs text-ink-700">
+                    <p>
+                      {formatPrice(selectedLead.budget.min, selectedLead.budget.currency)} —{" "}
+                      {formatPrice(selectedLead.budget.max, selectedLead.budget.currency)}
+                    </p>
+                    <p className="text-[10px] text-ink-700">Currency: {selectedLead.budget.currency}</p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-ink-700">Not specified</p>
+                )}
+              </div>
+
+              {/* Location & Type */}
+              <div className="rounded-lg border border-line bg-canvas-card p-4">
+                <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-ink">
+                  <MapPin className="h-3.5 w-3.5 text-ink-700" />
+                  Preferences
+                </h3>
+                <div className="space-y-2 text-xs text-ink-700">
+                  <p>
+                    <span className="text-ink-700">Locations:</span>{" "}
+                    {selectedLead.preferredLocations.join(", ") || "None selected"}
+                  </p>
+                  <p>
+                    <span className="text-ink-700">Property Type:</span>{" "}
+                    {selectedLead.preferredPropertyType
+                      ? selectedLead.preferredPropertyType.charAt(0).toUpperCase() +
+                        selectedLead.preferredPropertyType.slice(1)
+                      : "Any"}
+                  </p>
+                </div>
+              </div>
+
+              {/* Quiz Data */}
+              <div className="rounded-lg border border-line bg-canvas-card p-4">
+                <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-ink">
+                  <Tag className="h-3.5 w-3.5 text-ink-700" />
+                  Quiz Responses
+                </h3>
+                {(() => {
+                  const quiz = parseQuizData(selectedLead.notes);
+                  return quiz.isQualified ? (
+                    <div className="space-y-2 text-xs text-ink-700">
+                      <p><span className="text-ink-700">Intent:</span> {quiz.intent || "—"}</p>
+                      <p><span className="text-ink-700">Timeline:</span> {quiz.timeline || "—"}</p>
+                      <p><span className="text-ink-700">Source:</span> Matchmaker Quiz</p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-ink-700">No quiz data — lead from direct inquiry.</p>
                   );
-                })}
-              </tbody>
-            </table>
+                })()}
+              </div>
+
+              {/* Source & Date */}
+              <div className="rounded-lg border border-line bg-canvas-card p-4">
+                <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-ink">
+                  <Calendar className="h-3.5 w-3.5 text-ink-700" />
+                  Lead Info
+                </h3>
+                <div className="space-y-2 text-xs text-ink-700">
+                  <p>
+                    <span className="text-ink-700">Source:</span>{" "}
+                    <span className="capitalize">
+                      {selectedLead.source === "quiz"
+                        ? "Matchmaker Quiz"
+                        : selectedLead.source === "property-detail"
+                        ? "Property Detail Page"
+                        : selectedLead.source.replace("-", " ")}
+                    </span>
+                  </p>
+                  <p>
+                    <span className="text-ink-700">Created:</span>{" "}
+                    {new Date(selectedLead.createdAt).toLocaleDateString("en-GB", {
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric",
+                    })}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Interested Properties */}
+            {interestedPropertyData.length > 0 && (
+              <div className="rounded-lg border border-line bg-canvas-card p-5">
+                <h3 className="mb-4 flex items-center gap-1.5 text-xs font-semibold text-ink">
+                  <Home className="h-3.5 w-3.5 text-ink-700" />
+                  Interested Properties ({interestedPropertyData.length})
+                </h3>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {interestedPropertyData.map((prop) => (
+                    <Link
+                      key={prop.id}
+                      href={`/properties/${prop.slug || prop.id}`}
+                      target="_blank"
+                      className="flex items-center gap-3 rounded-lg border border-line p-3 hover:bg-canvas-muted"
+                    >
+                      <div className="relative h-12 w-16 shrink-0 overflow-hidden rounded-md bg-canvas-muted">
+                        <Image
+                          src={prop.images[0]}
+                          alt={prop.title}
+                          fill
+                          className="object-cover"
+                          unoptimized
+                        />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-semibold text-ink">
+                          {prop.title}
+                        </p>
+                        <p className="text-[10px] text-ink-700">
+                          {prop.location.area} · {formatPrice(prop.price, prop.currency)}
+                        </p>
+                      </div>
+                      <Eye className="h-3.5 w-3.5 shrink-0 text-ink-700/40" />
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Viewings */}
+            <div className="rounded-lg border border-line bg-canvas-card p-5">
+              <h3 className="mb-4 flex items-center gap-1.5 text-xs font-semibold text-ink">
+                <Clock className="h-3.5 w-3.5 text-ink-700" />
+                Inspection Schedule ({leadViewings.length})
+              </h3>
+              {leadViewings.length === 0 ? (
+                <p className="text-xs text-ink-700">No viewing requests yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {leadViewings.map((v) => {
+                    const prop = mockProperties.find((p) => p.id === v.propertyId);
+                    let meta: { inspectionType?: string } = {};
+                    try {
+                      meta = v.notes ? JSON.parse(v.notes) : {};
+                    } catch {
+                      meta = {};
+                    }
+                    return (
+                      <div
+                        key={v.id}
+                        className="flex items-center justify-between rounded-lg border border-line px-4 py-3"
+                      >
+                        <div>
+                          <p className="text-xs font-semibold text-ink">
+                            {prop?.title || v.propertyId}
+                          </p>
+                          <p className="text-[10px] text-ink-700">
+                            {meta.inspectionType === "virtual" ? "Virtual Tour" : "In-Person"} ·{" "}
+                            {v.requestedDate} at {v.requestedTime}
+                          </p>
+                        </div>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                            v.status === "confirmed"
+                              ? "bg-forest/10 text-ink"
+                              : v.status === "pending"
+                              ? "bg-amber-100 text-amber-700"
+                              : v.status === "cancelled"
+                              ? "bg-red-100 text-red-600"
+                              : "bg-canvas-muted text-ink-700"
+                          }`}
+                        >
+                          {v.status.charAt(0).toUpperCase() + v.status.slice(1)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Agent Notes */}
+            <div className="rounded-lg border border-line bg-canvas-card p-5">
+              <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-ink">
+                <StickyNote className="h-3.5 w-3.5 text-ink-700" />
+                Internal Agent Notes
+              </h3>
+              <textarea
+                value={agentNotes}
+                onChange={(e) => {
+                  setAgentNotes(e.target.value);
+                  setNotesSaved(false);
+                }}
+                rows={4}
+                placeholder="Add private notes about this lead (visible only to agents)..."
+                className="w-full rounded-lg border border-line bg-canvas-muted px-3 py-2.5 text-xs text-ink-700 outline-none transition-colors placeholder:text-ink-700/40 focus:border-[var(--brand-primary)] focus:bg-canvas-card"
+              />
+              <div className="mt-2 flex items-center justify-between">
+                <p className="text-[10px] text-ink-700">
+                  Notes are saved locally and visible only to agents.
+                </p>
+                <button
+                  onClick={saveNotes}
+                  className="flex items-center gap-1.5 rounded-lg bg-ink px-4 py-2 text-xs font-semibold text-white hover:bg-ink-800"
+                >
+                  {notesSaved ? (
+                    <>
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Saved!
+                    </>
+                  ) : (
+                    <>
+                      <Save className="h-3.5 w-3.5" />
+                      Save Notes
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+export default function LeadsPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-xs text-ink-700">Loading leads...</div>}>
+      <LeadsContent />
+    </Suspense>
   );
 }
