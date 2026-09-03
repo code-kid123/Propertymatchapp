@@ -27,6 +27,7 @@ import { formatPrice, generateWhatsAppLink } from "@/utils/formatters";
 import { mockProperties } from "@/data/mockProperties";
 import type { Lead, LeadStatus } from "@/types";
 export const dynamic = 'force-dynamic';
+
 const STATUS_OPTIONS: { value: LeadStatus; label: string; color: string }[] = [
   { value: "new", label: "New", color: "bg-blue-100 text-blue-700" },
   { value: "contacted", label: "Contacted", color: "bg-amber-100 text-amber-700" },
