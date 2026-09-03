@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   SlidersHorizontal,
@@ -24,13 +24,18 @@ const PROPERTY_TYPES: { label: string; value: PropertyType }[] = [
   { label: "Terrace", value: "terrace" },
 ];
 
-export default function PropertiesPage() {
+function PropertiesContent() {
+  const [mounted, setMounted] = useState(false);
   const searchParams = useSearchParams();
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const {
     filters,
     filtered,
     availableAreas,
-    activeFilterCount,
     hasActiveFilters,
     setBuyOrRent,
     toggleLocation,
@@ -42,6 +47,8 @@ export default function PropertiesPage() {
   } = usePropertyFilter(mockProperties);
 
   useEffect(() => {
+    if (!mounted || !searchParams) return;
+
     const buyOrRent = searchParams.get("buyOrRent");
     const location = searchParams.get("location");
     const type = searchParams.get("type");
@@ -62,7 +69,15 @@ export default function PropertiesPage() {
       if (maxPrice) next.maxPrice = Number(maxPrice);
       return next;
     });
-  }, [searchParams, setFilters]);
+  }, [mounted, searchParams, setFilters]);
+
+  if (!mounted) {
+    return (
+      <div className="mx-auto max-w-7xl px-4 py-16 text-center text-sm text-ink-700">
+        Loading properties...
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -244,5 +259,19 @@ export default function PropertiesPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function PropertiesPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="mx-auto max-w-7xl px-4 py-16 text-center text-sm text-ink-700">
+          Loading properties...
+        </div>
+      }
+    >
+      <PropertiesContent />
+    </Suspense>
   );
 }
