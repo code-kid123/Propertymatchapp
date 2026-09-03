@@ -24,13 +24,8 @@ const PROPERTY_TYPES: { label: string; value: PropertyType }[] = [
   { label: "Terrace", value: "terrace" },
 ];
 
-function PropertiesContent() {
-  const [mounted, setMounted] = useState(false);
+function PropertiesView() {
   const searchParams = useSearchParams();
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   const {
     filters,
@@ -47,7 +42,7 @@ function PropertiesContent() {
   } = usePropertyFilter(mockProperties);
 
   useEffect(() => {
-    if (!mounted || !searchParams) return;
+    if (!searchParams) return;
 
     const buyOrRent = searchParams.get("buyOrRent");
     const location = searchParams.get("location");
@@ -69,15 +64,7 @@ function PropertiesContent() {
       if (maxPrice) next.maxPrice = Number(maxPrice);
       return next;
     });
-  }, [mounted, searchParams, setFilters]);
-
-  if (!mounted) {
-    return (
-      <div className="mx-auto max-w-7xl px-4 py-16 text-center text-sm text-ink-700">
-        Loading properties...
-      </div>
-    );
-  }
+  }, [searchParams, setFilters]);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -192,11 +179,11 @@ function PropertiesContent() {
               defaultValue="0,Infinity"
             >
               <option value="0,Infinity">Any Price</option>
-              <option value="0,10000000">Under &#x20A6;10M</option>
-              <option value="10000000,50000000">&#x20A6;10M &#x2013; &#x20A6;50M</option>
-              <option value="50000000,200000000">&#x20A6;50M &#x2013; &#x20A6;200M</option>
-              <option value="200000000,500000000">&#x20A6;200M &#x2013; &#x20A6;500M</option>
-              <option value="500000000,Infinity">&#x20A6;500M+</option>
+              <option value="0,10000000">Under ₦10M</option>
+              <option value="10000000,50000000">₦10M – ₦50M</option>
+              <option value="50000000,200000000">₦50M – ₦200M</option>
+              <option value="200000000,500000000">₦200M – ₦500M</option>
+              <option value="500000000,Infinity">₦500M+</option>
             </select>
           </div>
         </div>
@@ -263,6 +250,20 @@ function PropertiesContent() {
 }
 
 export default function PropertiesPage() {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return (
+      <div className="mx-auto max-w-7xl px-4 py-16 text-center text-sm text-ink-700">
+        Loading properties...
+      </div>
+    );
+  }
+
   return (
     <Suspense
       fallback={
@@ -271,7 +272,7 @@ export default function PropertiesPage() {
         </div>
       }
     >
-      <PropertiesContent />
+      <PropertiesView />
     </Suspense>
   );
 }
