@@ -1,11 +1,10 @@
 "use client";
 
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import {
-  X,
   ArrowLeft,
   MessageCircle,
   Mail,
@@ -26,7 +25,6 @@ import { supabase } from "@/lib/supabase";
 import { formatPrice, generateWhatsAppLink } from "@/utils/formatters";
 import { mockProperties } from "@/data/mockProperties";
 import type { Lead, LeadStatus } from "@/types";
-export const dynamic = 'force-dynamic';
 
 const STATUS_OPTIONS: { value: LeadStatus; label: string; color: string }[] = [
   { value: "new", label: "New", color: "bg-blue-100 text-blue-700" },
@@ -36,12 +34,17 @@ const STATUS_OPTIONS: { value: LeadStatus; label: string; color: string }[] = [
   { value: "not-interested", label: "Not Interested", color: "bg-canvas-muted text-ink-700" },
 ];
 
-export default function LeadsPage() {
+function LeadsContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { leads, viewingRequests, updateLead, setLeads } = useApp();
+  
+  const appContext = useApp();
+  const leads = appContext?.leads ?? [];
+  const viewingRequests = appContext?.viewingRequests ?? [];
+  const updateLead = appContext?.updateLead ?? (() => {});
+  const setLeads = appContext?.setLeads ?? (() => {});
 
-  const activeId = searchParams.get("id");
+  const activeId = searchParams?.get("id") ?? null;
   const selectedLead = useMemo(
     () => leads.find((l) => l.id === activeId) || null,
     [leads, activeId]
@@ -57,7 +60,7 @@ export default function LeadsPage() {
         .select("*")
         .order("created_at", { ascending: false });
       if (data && data.length > 0) {
-        const mapped = data.map((row) => ({
+        const mapped: Lead[] = data.map((row: any) => ({
           id: row.id,
           firstName: (row.full_name || "").split(" ")[0] || "",
           lastName: (row.full_name || "").split(" ").slice(1).join(" ") || "",
@@ -86,7 +89,7 @@ export default function LeadsPage() {
 
   useEffect(() => {
     if (selectedLead) {
-      const existing = selectedLead.notes.startsWith("[Agent Notes]")
+      const existing = selectedLead.notes?.startsWith("[Agent Notes]")
         ? selectedLead.notes.replace("[Agent Notes] ", "")
         : "";
       setAgentNotes(existing);
@@ -98,7 +101,7 @@ export default function LeadsPage() {
     if (!selectedLead) return;
     const prefix = agentNotes.trim()
       ? `[Agent Notes] ${agentNotes.trim()}`
-      : selectedLead.notes.replace(/^\[Agent Notes\]\s*/, "");
+      : (selectedLead.notes || "").replace(/^\[Agent Notes\]\s*/, "");
     updateLead(selectedLead.id, { notes: prefix });
     setNotesSaved(true);
     setTimeout(() => setNotesSaved(false), 2000);
@@ -116,7 +119,7 @@ export default function LeadsPage() {
         ? viewingRequests.filter(
             (v) =>
               v.leadId === selectedLead.id ||
-              (selectedLead.interestedProperties.includes(v.propertyId))
+              (selectedLead.interestedProperties && selectedLead.interestedProperties.includes(v.propertyId))
           )
         : [],
     [selectedLead, viewingRequests]
@@ -124,13 +127,13 @@ export default function LeadsPage() {
 
   const interestedPropertyData = useMemo(
     () =>
-      selectedLead
+      selectedLead && selectedLead.interestedProperties
         ? mockProperties.filter((p) => selectedLead.interestedProperties.includes(p.id))
         : [],
     [selectedLead]
   );
 
-  const parseQuizData = (notes: string) => {
+  const parseQuizData = (notes: string = "") => {
     const timeline = notes.match(/Timeline:\s*([^.]*)/)?.[1]?.trim() || "";
     const intent = notes.match(/Intent:\s*([^.]*)/)?.[1]?.trim() || "";
     const isQualified = notes.includes("[Qualified via Quiz]");
@@ -157,7 +160,7 @@ export default function LeadsPage() {
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[340px_1fr]">
         {/* --- LEAD LIST PANEL --- */}
-        <div className="rounded-lg border border-line bg-canvas-card ">
+        <div className="rounded-lg border border-line bg-canvas-card">
           <div className="border-b border-line px-4 py-3">
             <h2 className="text-xs font-semibold text-ink">
               All Leads ({leads.length})
@@ -185,8 +188,8 @@ export default function LeadsPage() {
                     }`}
                   >
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-canvas-muted text-xs font-semibold text-ink-700">
-                      {lead.firstName[0]}
-                      {lead.lastName[0]}
+                      {lead.firstName?.[0] || "?"}
+                      {lead.lastName?.[0] || ""}
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-ink">
@@ -216,12 +219,12 @@ export default function LeadsPage() {
         ) : (
           <div className="space-y-6">
             {/* Top Card */}
-            <div className="rounded-lg border border-line bg-canvas-card p-6 ">
+            <div className="rounded-lg border border-line bg-canvas-card p-6">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="flex items-center gap-4">
                   <div className="flex h-14 w-14 items-center justify-center rounded-full bg-forest/10 text-lg font-semibold text-ink">
-                    {selectedLead.firstName[0]}
-                    {selectedLead.lastName[0]}
+                    {selectedLead.firstName?.[0] || "?"}
+                    {selectedLead.lastName?.[0] || ""}
                   </div>
                   <div>
                     <h2 className="text-lg font-semibold text-ink">
@@ -234,17 +237,7 @@ export default function LeadsPage() {
                           onClick={() => handleStatusChange(opt.value)}
                           className={`rounded-full px-3 py-1 text-[10px] font-semibold transition-all ${
                             selectedLead.status === opt.value
-                              ? `${opt.color} ring-2 ring-offset-1 ${
-                                  opt.value === "new"
-                                    ? "ring-blue-300"
-                                    : opt.value === "contacted"
-                                    ? "ring-amber-300"
-                                    : opt.value === "viewing-scheduled"
-                                    ? "ring-ink/20"
-                                    : opt.value === "converted"
-                                    ? "ring-[var(--brand-primary)]"
-                                    : "ring-gray-300"
-                                }`
+                              ? `${opt.color} ring-2 ring-offset-1`
                               : "bg-canvas-muted text-ink-700 hover:bg-canvas-muted"
                           }`}
                         >
@@ -288,7 +281,7 @@ export default function LeadsPage() {
             {/* Details Grid */}
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {/* Contact */}
-              <div className="rounded-lg border border-line bg-canvas-card p-4 ">
+              <div className="rounded-lg border border-line bg-canvas-card p-4">
                 <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-ink">
                   <Phone className="h-3.5 w-3.5 text-ink-700" />
                   Contact Details
@@ -301,7 +294,7 @@ export default function LeadsPage() {
               </div>
 
               {/* Budget */}
-              <div className="rounded-lg border border-line bg-canvas-card p-4 ">
+              <div className="rounded-lg border border-line bg-canvas-card p-4">
                 <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-ink">
                   <DollarSign className="h-3.5 w-3.5 text-ink-700" />
                   Target Budget
@@ -320,7 +313,7 @@ export default function LeadsPage() {
               </div>
 
               {/* Location & Type */}
-              <div className="rounded-lg border border-line bg-canvas-card p-4 ">
+              <div className="rounded-lg border border-line bg-canvas-card p-4">
                 <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-ink">
                   <MapPin className="h-3.5 w-3.5 text-ink-700" />
                   Preferences
@@ -328,7 +321,7 @@ export default function LeadsPage() {
                 <div className="space-y-2 text-xs text-ink-700">
                   <p>
                     <span className="text-ink-700">Locations:</span>{" "}
-                    {selectedLead.preferredLocations.join(", ") || "None selected"}
+                    {selectedLead.preferredLocations?.join(", ") || "None selected"}
                   </p>
                   <p>
                     <span className="text-ink-700">Property Type:</span>{" "}
@@ -341,7 +334,7 @@ export default function LeadsPage() {
               </div>
 
               {/* Quiz Data */}
-              <div className="rounded-lg border border-line bg-canvas-card p-4 ">
+              <div className="rounded-lg border border-line bg-canvas-card p-4">
                 <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-ink">
                   <Tag className="h-3.5 w-3.5 text-ink-700" />
                   Quiz Responses
@@ -361,7 +354,7 @@ export default function LeadsPage() {
               </div>
 
               {/* Source & Date */}
-              <div className="rounded-lg border border-line bg-canvas-card p-4 ">
+              <div className="rounded-lg border border-line bg-canvas-card p-4">
                 <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-ink">
                   <Calendar className="h-3.5 w-3.5 text-ink-700" />
                   Lead Info
@@ -374,7 +367,7 @@ export default function LeadsPage() {
                         ? "Matchmaker Quiz"
                         : selectedLead.source === "property-detail"
                         ? "Property Detail Page"
-                        : selectedLead.source.replace("-", " ")}
+                        : (selectedLead.source || "").replace("-", " ")}
                     </span>
                   </p>
                   <p>
@@ -391,7 +384,7 @@ export default function LeadsPage() {
 
             {/* Interested Properties */}
             {interestedPropertyData.length > 0 && (
-              <div className="rounded-lg border border-line bg-canvas-card p-5 ">
+              <div className="rounded-lg border border-line bg-canvas-card p-5">
                 <h3 className="mb-4 flex items-center gap-1.5 text-xs font-semibold text-ink">
                   <Home className="h-3.5 w-3.5 text-ink-700" />
                   Interested Properties ({interestedPropertyData.length})
@@ -418,7 +411,7 @@ export default function LeadsPage() {
                           {prop.title}
                         </p>
                         <p className="text-[10px] text-ink-700">
-                          {prop.location.area} · {formatPrice(prop.price, prop.currency)}
+                          {prop.location?.area} · {formatPrice(prop.price, prop.currency)}
                         </p>
                       </div>
                       <Eye className="h-3.5 w-3.5 shrink-0 text-ink-700/40" />
@@ -429,7 +422,7 @@ export default function LeadsPage() {
             )}
 
             {/* Viewings */}
-            <div className="rounded-lg border border-line bg-canvas-card p-5 ">
+            <div className="rounded-lg border border-line bg-canvas-card p-5">
               <h3 className="mb-4 flex items-center gap-1.5 text-xs font-semibold text-ink">
                 <Clock className="h-3.5 w-3.5 text-ink-700" />
                 Inspection Schedule ({leadViewings.length})
@@ -440,7 +433,12 @@ export default function LeadsPage() {
                 <div className="space-y-2">
                   {leadViewings.map((v) => {
                     const prop = mockProperties.find((p) => p.id === v.propertyId);
-                    const meta = v.notes ? JSON.parse(v.notes) : {};
+                    let meta: { inspectionType?: string } = {};
+                    try {
+                      meta = v.notes ? JSON.parse(v.notes) : {};
+                    } catch {
+                      meta = {};
+                    }
                     return (
                       <div
                         key={v.id}
@@ -476,7 +474,7 @@ export default function LeadsPage() {
             </div>
 
             {/* Agent Notes */}
-            <div className="rounded-lg border border-line bg-canvas-card p-5 ">
+            <div className="rounded-lg border border-line bg-canvas-card p-5">
               <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-ink">
                 <StickyNote className="h-3.5 w-3.5 text-ink-700" />
                 Internal Agent Notes
@@ -517,5 +515,13 @@ export default function LeadsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function LeadsPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-xs text-ink-700">Loading leads...</div>}>
+      <LeadsContent />
+    </Suspense>
   );
 }
